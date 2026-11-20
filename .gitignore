@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Blender files & autosaves
+*.blend
+*.blend1
+*.blend2
+*.blend@
+*.bmesh
+
+# 3D Assets & Simulation caches
+*.stl
+*.obj
+*.fbx
+*.ply
+*.dae
+*.gltf
+*.glb
+
+# Render outputs & images
+*.png
+*.jpg
+*.jpeg
+*.exr
+*.hdr
+*.tif
+*.tiff
+*.mp4
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.log
