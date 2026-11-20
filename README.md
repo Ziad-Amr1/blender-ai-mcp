@@ -1,5 +1,9 @@
 # Blender AI MCP Server & Live Bridge
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![MCP Protocol](https://img.shields.io/badge/MCP-1.0+-green.svg)](https://modelcontextprotocol.io/)
+
 An AI Model Context Protocol (MCP) server and bidirectional live bridge for **Blender 3D**. Connect AI assistants (such as Google Antigravity, Claude Desktop, Cursor, or OpenCode) directly to an active Blender session for real-time 3D scene inspection, geometry creation, Python script execution, and rendering.
 
 ---
@@ -38,20 +42,21 @@ An AI Model Context Protocol (MCP) server and bidirectional live bridge for **Bl
 - **Thread-Safe Live Bridge**: Executes all `bpy` and `bmesh` commands exclusively on Blender's main thread via `bpy.app.timers` to eliminate UI locks and crashes.
 - **Full Scene Inspection**: Retrieve detailed object hierarchies, types, locations, bounding boxes, mesh polygon counts, and active camera settings.
 - **Arbitrary Python Automation**: Execute complex Blender Python scripts dynamically, with captured stdout, stderr, and returned dictionary results.
-- **Parametric Geometry**: Create primitive meshes (cubes, cylinders, UV spheres, icospheres, cones, planes) programmatically.
+- **Parametric 3D Modeling**: Create primitive meshes (cubes, cylinders, UV spheres, icospheres, cones, planes), apply translations, rotations, scaling, and configure modifiers.
+- **Lighting & Camera Setup**: Create and position cameras aimed at 3D targets, configure focal lengths, and set up scene illumination.
+- **PBR Material Creation**: Generate and configure Principled BSDF materials with base color, metallic, roughness, and transmission.
 - **Viewport Rendering**: Capture high-resolution viewport or Cycles/Eevee render frames and return image file paths directly to the AI model.
 - **Two Integration Modes**: Run as a simple script inside Blender's Text Editor or install as a permanent Blender Add-on with a dedicated Sidebar (N-panel) UI.
 
 ---
 
-## Quickstart Guide
+## Installation & Quickstart
 
-### 1. Requirements
-- Blender 3.0 or higher (compatible with Blender 4.x)
-- Python 3.10+
-- Dependencies:
+### 1. Install Package
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/Ziad-Amr1/blender-ai-mcp.git
+cd blender-ai-mcp
+pip install -e .
 ```
 
 ### 2. Start the Live Bridge inside Blender
@@ -70,7 +75,7 @@ pip install -r requirements.txt
 
 ---
 
-## MCP Server Configuration
+## MCP Client Configuration
 
 Add the server to your MCP client configuration file:
 
@@ -79,10 +84,7 @@ Add the server to your MCP client configuration file:
 {
   "mcpServers": {
     "blender": {
-      "command": "python",
-      "args": [
-        "E:/course/03_Programming_Data/AI/Projects/blender-ai-mcp/mcp_server.py"
-      ],
+      "command": "blender-mcp",
       "env": {
         "BLENDER_BRIDGE_URL": "http://127.0.0.1:9876"
       }
@@ -97,10 +99,7 @@ Add the server to your MCP client configuration file:
   "mcp": {
     "servers": {
       "blender": {
-        "command": "python",
-        "args": [
-          "E:/course/03_Programming_Data/AI/Projects/blender-ai-mcp/mcp_server.py"
-        ]
+        "command": "blender-mcp"
       }
     }
   }
@@ -119,12 +118,16 @@ Add the server to your MCP client configuration file:
 | `blender_query_objects` | Query objects matching specific names or types (`MESH`, `CAMERA`, etc.). |
 | `blender_select_objects` | Select, deselect, or set active object by name. |
 | `blender_create_primitive` | Spawn parametric primitive geometry at specified coordinates. |
+| `blender_transform_object` | Move, rotate, or scale objects in world or relative coordinates. |
+| `blender_apply_modifier` | Add and apply modifiers (Subsurf, Bevel, Boolean, Mirror, Solidify). |
+| `blender_setup_camera_light` | Position cameras aimed at targets and configure lighting. |
+| `blender_create_material` | Create PBR Principled BSDF materials with custom surface parameters. |
 | `blender_delete_objects` | Safely remove scene objects and purge orphan mesh datablocks. |
-| `blender_get_materials` | List all materials, node structures, and object material slots. |
 | `blender_render_viewport` | Trigger viewport render or full F12 render and save image. |
+| `blender_import_model` | Import standard 3D formats (.stl, .obj, .fbx, .gltf, .ply). |
 | `blender_export_model` | Export scene or selected objects to STL, OBJ, FBX, or GLTF. |
 
 ---
 
-## Author
-Developed by **Ziad Amr**
+## License
+Open source under the MIT License.

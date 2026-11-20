@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blender-ai-mcp"
+version = "1.0.0"
+description = "AI Model Context Protocol (MCP) server and live bidirectional bridge for Blender 3D automation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Ziad Amr" }
+]
+keywords = [
+    "blender",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "fastmcp",
+    "blender3d",
+    "3d",
+    "automation",
+    "claude",
+    "antigravity"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "requests>=2.28.0",
+]
+
+[project.scripts]
+blender-mcp = "blender_mcp.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["blender_mcp*"]
