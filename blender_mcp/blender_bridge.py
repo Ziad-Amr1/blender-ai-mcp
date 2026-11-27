@@ -106,20 +106,35 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path in ("/ping", "/status"):
+        if self.path in ("/", "/ping", "/status"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._send_cors_headers()
             self.end_headers()
 
-            active_obj = bpy.context.active_object.name if bpy.context.active_object else None
+            active_obj = None
+            selected_objs = []
+            mode = "OBJECT"
+            try:
+                view_layer = getattr(bpy.context, "view_layer", None)
+                if view_layer and hasattr(view_layer, "objects") and view_layer.objects.active:
+                    active_obj = view_layer.objects.active.name
+                elif getattr(bpy.context, "active_object", None):
+                    active_obj = bpy.context.active_object.name
+
+                if hasattr(bpy.context, "selected_objects"):
+                    selected_objs = [o.name for o in bpy.context.selected_objects]
+                mode = getattr(bpy.context, "mode", "OBJECT")
+            except Exception:
+                pass
+
             payload = {
                 "status": "connected",
                 "blender_version": bpy.app.version_string,
                 "filepath": bpy.data.filepath or "Untitled.blend",
-                "mode": bpy.context.mode if hasattr(bpy.context, "mode") else "UNKNOWN",
+                "mode": mode,
                 "active_object": active_obj,
-                "selected_objects": [o.name for o in bpy.context.selected_objects],
+                "selected_objects": selected_objs,
                 "total_objects": len(bpy.data.objects),
                 "total_materials": len(bpy.data.materials),
                 "total_meshes": len(bpy.data.meshes),
