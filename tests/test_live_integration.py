@@ -47,6 +47,7 @@ def live_blender_bridge():
 import sys, os, time
 os.environ['BLENDER_BRIDGE_PORT'] = '{TEST_BRIDGE_PORT}'
 os.environ['BLENDER_BRIDGE_HOST'] = '127.0.0.1'
+os.environ['BLENDER_ALLOW_PYTHON_EXEC'] = 'true'
 
 with open(r'{bridge_script}', 'r', encoding='utf-8') as f:
     exec(f.read(), globals())
@@ -115,6 +116,8 @@ def test_live_bridge_connection_status(live_blender_bridge):
     assert "active_object" in status
     assert status.get("executed_on_thread") == "MainThread"
     assert isinstance(status.get("executed_on_thread_id"), int)
+    assert status.get("is_main_thread") is True
+    assert status.get("main_thread_id") == status.get("executed_on_thread_id")
 
 
 @pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
@@ -126,6 +129,8 @@ def test_live_scene_inspection(live_blender_bridge):
     assert isinstance(scene["objects"], list)
     assert scene.get("executed_on_thread") == "MainThread"
     assert isinstance(scene.get("executed_on_thread_id"), int)
+    assert scene.get("is_main_thread") is True
+    assert scene.get("main_thread_id") == scene.get("executed_on_thread_id")
 
 
 @pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
@@ -142,6 +147,8 @@ def test_live_lifecycle_create_transform_export_delete(live_blender_bridge, tmp_
     assert res_thread.get("success") is True
     assert res_thread.get("executed_on_thread") == "MainThread"
     assert res_thread.get("result") == "MainThread"
+    assert res_thread.get("is_main_thread") is True
+    assert res_thread.get("main_thread_id") == res_thread.get("executed_on_thread_id")
 
     # 1. Create primitive
     res_create = client.create_primitive("cube", name=obj_name, location=(2.0, 3.0, 1.0), size=2.5)
@@ -175,20 +182,54 @@ def test_live_lifecycle_create_transform_export_delete(live_blender_bridge, tmp_
 
 
 @pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
-def test_live_allow_python_exec_disabled(tmp_path):
+def test_live_concurrent_requests(live_blender_bridge):
     """
-    Test 4: Verify BLENDER_ALLOW_PYTHON_EXEC=false blocks execution with HTTP 403 Forbidden
-    while allowing read-only status inspection.
+    Test 4: Verify thread-safety and queue serialization under concurrent HTTP load.
+    Multiple worker threads simultaneously query status and inspect scene.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    client = live_blender_bridge
+
+    def query_status():
+        return client.get_status()
+
+    def query_inspect():
+        return client.inspect_scene()
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = []
+        for _ in range(5):
+            futures.append(executor.submit(query_status))
+            futures.append(executor.submit(query_inspect))
+
+        for f in as_completed(futures):
+            res = f.result()
+            assert "error" not in res or res.get("status") == "connected"
+            if "status" in res:
+                assert res["status"] == "connected"
+                assert res.get("is_main_thread") is True
+            elif "objects" in res:
+                assert isinstance(res["objects"], list)
+                assert res.get("is_main_thread") is True
+
+
+@pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
+def test_live_allow_python_exec_disabled_by_default(tmp_path):
+    """
+    Test 5: Verify BLENDER_ALLOW_PYTHON_EXEC defaults to FALSE (secure by default).
+    Without setting BLENDER_ALLOW_PYTHON_EXEC, arbitrary execution must return HTTP 403 Forbidden
+    before parsing, queueing, or evaluation, while read-only monitoring remains accessible.
     """
     port = 9897
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     bridge_script = os.path.join(repo_root, "blender_mcp", "blender_bridge.py")
 
+    # Driver without BLENDER_ALLOW_PYTHON_EXEC set (defaults to false)
     driver_code = f"""
 import sys, os, time
 os.environ['BLENDER_BRIDGE_PORT'] = '{port}'
 os.environ['BLENDER_BRIDGE_HOST'] = '127.0.0.1'
-os.environ['BLENDER_ALLOW_PYTHON_EXEC'] = 'false'
 
 with open(r'{bridge_script}', 'r', encoding='utf-8') as f:
     exec(f.read(), globals())
@@ -218,18 +259,24 @@ while globals().get('SERVER_RUNNING', True):
             if st.get("status") == "connected":
                 ready = True
                 break
-        assert ready, "Bridge failed to start in exec-disabled mode"
+        assert ready, "Bridge failed to start in default secure mode"
 
-        # Verify status still works
+        # Verify status works and executed on main thread
         st = client.get_status()
         assert st.get("status") == "connected"
         assert st.get("executed_on_thread") == "MainThread"
+        assert st.get("is_main_thread") is True
 
-        # Verify execute_python is blocked with 403 Forbidden
-        res = client.execute_python("print('should be blocked')")
+        # Verify inspect works
+        scene = client.inspect_scene()
+        assert "objects" in scene
+        assert scene.get("is_main_thread") is True
+
+        # Verify execute_python is blocked with 403 Forbidden before evaluation
+        res = client.execute_python("import os; result = os.name")
         assert res.get("success") is False
         assert res.get("http_code") == 403
-        assert "disabled" in res.get("error", "").lower()
+        assert "disabled by default" in res.get("error", "").lower()
     finally:
         proc.terminate()
         try:
@@ -245,11 +292,11 @@ while globals().get('SERVER_RUNNING', True):
 @pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
 def test_live_bridge_auth_token_enforcement(tmp_path):
     """
-    Test 5: Verify BLENDER_BRIDGE_AUTH_TOKEN rejects unauthorized requests (401)
+    Test 6: Verify BLENDER_BRIDGE_AUTH_TOKEN rejects unauthorized requests (401)
     and accepts authorized requests (200).
     """
     port = 9896
-    token = "secret_integration_token_xyz"
+    token = "secret_integration_token_high_entropy_1234"
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     bridge_script = os.path.join(repo_root, "blender_mcp", "blender_bridge.py")
 
@@ -258,6 +305,7 @@ import sys, os, time
 os.environ['BLENDER_BRIDGE_PORT'] = '{port}'
 os.environ['BLENDER_BRIDGE_HOST'] = '127.0.0.1'
 os.environ['BLENDER_BRIDGE_AUTH_TOKEN'] = '{token}'
+os.environ['BLENDER_ALLOW_PYTHON_EXEC'] = 'true'
 
 with open(r'{bridge_script}', 'r', encoding='utf-8') as f:
     exec(f.read(), globals())
@@ -306,6 +354,7 @@ while globals().get('SERVER_RUNNING', True):
         res_ok = client_auth.get_status()
         assert res_ok.get("status") == "connected"
         assert res_ok.get("executed_on_thread") == "MainThread"
+        assert res_ok.get("is_main_thread") is True
 
         # 4. Authorized execute -> 200
         res_exec = client_auth.execute_python("result = 42 * 2")

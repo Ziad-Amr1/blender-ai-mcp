@@ -7,12 +7,17 @@ to allow external AI agents and MCP servers to inspect and edit your active Blen
 Features:
 - Strict thread-safe command execution: ZERO bpy/bmesh access on HTTP threads.
   All bpy, bmesh, context, and data operations dispatch to Blender's main thread.
-- Captures executed_on_thread and executed_on_thread_id in responses.
+- Proof of main-thread execution: captures Blender's initialization thread identity
+  and verifies every queued operation executes on the main thread (is_main_thread = True).
 - Security controls:
-  * BLENDER_ALLOW_PYTHON_EXEC: disable arbitrary execution (returns 403 Forbidden).
-  * Mandatory BLENDER_BRIDGE_AUTH_TOKEN when binding to non-loopback network interfaces.
-  * Bearer and X-Bridge-Token authentication validation (never logged).
+  * BLENDER_ALLOW_PYTHON_EXEC: defaults to FALSE. Explicit opt-in required to enable execution.
+  * Blocks execution requests before parsing, queueing, or evaluation with HTTP 403.
+  * Constant-time token comparison (hmac.compare_digest) to prevent timing attacks.
+  * Refuses unsafe non-loopback network exposure without explicit BLENDER_BRIDGE_ALLOW_NON_LOOPBACK
+    opt-in and a high-entropy secret token (>= 16 characters).
+  * Warning against exposing plain HTTP directly to untrusted networks (requires TLS / tunnel).
 - Captures stdout, stderr, exception tracebacks, and return values.
+- Clean queue draining and event signaling on shutdown to prevent worker thread hangs.
 - JSON REST API for status, scene inspection, arbitrary Python execution, and viewport rendering.
 """
 
@@ -23,8 +28,10 @@ import json
 import queue
 import threading
 import traceback
+import hmac
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional
+
 try:
     import bpy
     import bmesh
@@ -32,27 +39,48 @@ except ImportError:
     bpy = None
     bmesh = None
 
+# Capture initialization thread identity (the Blender main thread when running inside Blender)
+MAIN_THREAD_ID = threading.get_ident()
+MAIN_THREAD_NAME = threading.current_thread().name
+
 DEFAULT_PORT = 9876
 DEFAULT_HOST = "127.0.0.1"
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 PORT = int(os.environ.get("BLENDER_BRIDGE_PORT", DEFAULT_PORT))
 HOST = os.environ.get("BLENDER_BRIDGE_HOST", DEFAULT_HOST)
-ALLOW_PYTHON_EXEC = os.environ.get("BLENDER_ALLOW_PYTHON_EXEC", "true").strip().lower() in ("true", "1", "yes")
+# Security default: arbitrary Python execution is DISABLED by default (requires explicit opt-in)
+ALLOW_PYTHON_EXEC = os.environ.get("BLENDER_ALLOW_PYTHON_EXEC", "false").strip().lower() in ("true", "1", "yes")
+ALLOW_NON_LOOPBACK = os.environ.get("BLENDER_BRIDGE_ALLOW_NON_LOOPBACK", "false").strip().lower() in ("true", "1", "yes")
 AUTH_TOKEN = os.environ.get("BLENDER_BRIDGE_AUTH_TOKEN", "").strip() or None
 
 
-def check_host_binding_security(host: str, token: Optional[str]) -> None:
-    """Verify that binding to an external/non-loopback network interface requires authentication."""
+def check_host_binding_security(host: str, token: Optional[str], allow_non_loopback: bool) -> None:
+    """
+    Verify that binding to an external/non-loopback network interface requires explicit
+    administrative opt-in and a secure authentication token.
+    Plain HTTP over untrusted networks is insecure; production exposure must use a TLS reverse
+    proxy (Nginx/Caddy) or SSH/VPN tunnel.
+    """
     is_loopback = host in LOOPBACK_HOSTS
-    if not is_loopback and not token:
-        raise RuntimeError(
-            f"Refusing to bind Blender Bridge to non-loopback interface '{host}' "
-            "without BLENDER_BRIDGE_AUTH_TOKEN set. Configure a secure token to proceed."
-        )
+    if not is_loopback:
+        if not allow_non_loopback:
+            raise RuntimeError(
+                f"Refusing to bind Blender Bridge to non-loopback interface '{host}'. "
+                "Plain HTTP on non-loopback interfaces exposes arbitrary scene control and is prohibited "
+                "without explicit opt-in. Set BLENDER_BRIDGE_ALLOW_NON_LOOPBACK=true and "
+                "BLENDER_BRIDGE_AUTH_TOKEN=<secret>, and deploy behind a TLS reverse proxy (e.g. Nginx, Caddy) "
+                "or secure SSH/VPN tunnel."
+            )
+        if not token or len(token) < 16:
+            raise RuntimeError(
+                f"Refusing to bind Blender Bridge to non-loopback interface '{host}' "
+                "with an insecure or missing token. BLENDER_BRIDGE_AUTH_TOKEN must be at least "
+                "16 characters when non-loopback binding is enabled."
+            )
 
 
-check_host_binding_security(HOST, AUTH_TOKEN)
+check_host_binding_security(HOST, AUTH_TOKEN, ALLOW_NON_LOOPBACK)
 
 # Manage singleton server instance to avoid address-in-use errors upon reload
 if "BRIDGE_SERVER" in globals() and globals()["BRIDGE_SERVER"]:
@@ -70,8 +98,13 @@ SERVER_RUNNING = True
 def process_queue():
     """
     Runs strictly on Blender's main thread via bpy.app.timers or main loop.
-    Executes queued tasks and records main-thread identity proof.
+    Executes queued tasks and verifies main-thread identity proof against initialization thread.
     """
+    current_thread = threading.current_thread()
+    current_id = current_thread.ident
+    current_name = current_thread.name
+    is_main = (current_id == MAIN_THREAD_ID)
+
     while not TASK_QUEUE.empty():
         try:
             task = TASK_QUEUE.get_nowait()
@@ -83,9 +116,21 @@ def process_queue():
         result_container = task.get("result_container", {})
         done_event = task.get("event")
 
-        current_thread = threading.current_thread()
-        result_container["executed_on_thread"] = current_thread.name
-        result_container["executed_on_thread_id"] = current_thread.ident
+        result_container["main_thread_id"] = MAIN_THREAD_ID
+        result_container["main_thread_name"] = MAIN_THREAD_NAME
+        result_container["executed_on_thread"] = current_name
+        result_container["executed_on_thread_id"] = current_id
+        result_container["is_main_thread"] = is_main
+
+        if not is_main:
+            result_container["success"] = False
+            result_container["error"] = (
+                f"CRITICAL CONCURRENCY VIOLATION: Task executed on thread '{current_name}' (ID {current_id}) "
+                f"instead of captured Blender main thread '{MAIN_THREAD_NAME}' (ID {MAIN_THREAD_ID})."
+            )
+            if done_event:
+                done_event.set()
+            continue
 
         if callable(func):
             try:
@@ -108,9 +153,9 @@ def process_queue():
         exec_globals = {
             "bpy": bpy,
             "bmesh": bmesh,
-            "context": bpy.context,
-            "data": bpy.data,
-            "ops": bpy.ops,
+            "context": getattr(bpy, "context", None),
+            "data": getattr(bpy, "data", None),
+            "ops": getattr(bpy, "ops", None),
             "result": None,
         }
 
@@ -160,10 +205,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         auth_hdr = self.headers.get("Authorization", "")
         if auth_hdr.startswith("Bearer "):
             token = auth_hdr[7:].strip()
-            if token == AUTH_TOKEN:
+            if hmac.compare_digest(token, AUTH_TOKEN):
                 return True
         x_token = self.headers.get("X-Bridge-Token", "").strip()
-        if x_token == AUTH_TOKEN:
+        if x_token and hmac.compare_digest(x_token, AUTH_TOKEN):
             return True
         return False
 
@@ -231,6 +276,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             payload = result_container.get("result", {})
             payload["executed_on_thread"] = result_container.get("executed_on_thread")
             payload["executed_on_thread_id"] = result_container.get("executed_on_thread_id")
+            payload["main_thread_id"] = result_container.get("main_thread_id")
+            payload["is_main_thread"] = result_container.get("is_main_thread")
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -293,6 +340,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             payload = result_container.get("result", {})
             payload["executed_on_thread"] = result_container.get("executed_on_thread")
             payload["executed_on_thread_id"] = result_container.get("executed_on_thread_id")
+            payload["main_thread_id"] = result_container.get("main_thread_id")
+            payload["is_main_thread"] = result_container.get("is_main_thread")
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -311,13 +360,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/execute":
+            # Security: verify execution is enabled BEFORE reading payload or queueing
             if not ALLOW_PYTHON_EXEC:
                 self.send_response(403)
                 self.send_header("Content-Type", "application/json")
                 self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({
-                    "error": "Arbitrary Python execution is disabled by BLENDER_ALLOW_PYTHON_EXEC configuration"
+                    "error": (
+                        "Arbitrary Python execution is disabled by default (BLENDER_ALLOW_PYTHON_EXEC=false). "
+                        "Explicit opt-in (BLENDER_ALLOW_PYTHON_EXEC=true) is required to run automation scripts."
+                    )
                 }).encode("utf-8"))
                 return
 
@@ -364,7 +417,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        # Silence routine HTTP request logs to keep Blender terminal clean
+        # Silence routine HTTP request logs to keep terminal clean and avoid leaking headers/tokens
         pass
 
 
@@ -381,6 +434,20 @@ def start_server():
 def stop_server():
     global SERVER_RUNNING
     SERVER_RUNNING = False
+
+    # Drain any remaining tasks in TASK_QUEUE and signal their events to avoid blocking HTTP workers
+    while not TASK_QUEUE.empty():
+        try:
+            task = TASK_QUEUE.get_nowait()
+            result_container = task.get("result_container", {})
+            result_container["success"] = False
+            result_container["error"] = "Blender Bridge server is shutting down"
+            done_event = task.get("event")
+            if done_event:
+                done_event.set()
+        except queue.Empty:
+            break
+
     if "BRIDGE_SERVER" in globals() and globals()["BRIDGE_SERVER"]:
         try:
             globals()["BRIDGE_SERVER"].shutdown()
@@ -403,4 +470,5 @@ if bpy is not None:
     print("=" * 65)
     print(f" [Blender AI Bridge] READY! Connected to Blender {bpy.app.version_string}")
     print(f" [Blender AI Bridge] Listening on http://{HOST}:{PORT}")
+    print(f" [Blender AI Bridge] MainThread ID: {MAIN_THREAD_ID} | Exec Allowed: {ALLOW_PYTHON_EXEC}")
     print("=" * 65)
