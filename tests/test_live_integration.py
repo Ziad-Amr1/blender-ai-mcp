@@ -113,15 +113,19 @@ def test_live_bridge_connection_status(live_blender_bridge):
     assert status.get("status") == "connected"
     assert status.get("blender_version") == "5.3.0"
     assert "active_object" in status
+    assert status.get("executed_on_thread") == "MainThread"
+    assert isinstance(status.get("executed_on_thread_id"), int)
 
 
 @pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
 def test_live_scene_inspection(live_blender_bridge):
-    """Test 2: Inspect live Blender scene hierarchy."""
+    """Test 2: Inspect live Blender scene hierarchy and verify main-thread execution."""
     scene = live_blender_bridge.inspect_scene()
     assert "objects" in scene
     assert "total_objects" in scene or "object_count" in scene or len(scene.get("objects", [])) >= 1
     assert isinstance(scene["objects"], list)
+    assert scene.get("executed_on_thread") == "MainThread"
+    assert isinstance(scene.get("executed_on_thread_id"), int)
 
 
 @pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
@@ -133,9 +137,16 @@ def test_live_lifecycle_create_transform_export_delete(live_blender_bridge, tmp_
     client = live_blender_bridge
     obj_name = "LiveTestCube"
 
+    # Verify execution runs strictly on MainThread
+    res_thread = client.execute_python("import threading; result = threading.current_thread().name")
+    assert res_thread.get("success") is True
+    assert res_thread.get("executed_on_thread") == "MainThread"
+    assert res_thread.get("result") == "MainThread"
+
     # 1. Create primitive
     res_create = client.create_primitive("cube", name=obj_name, location=(2.0, 3.0, 1.0), size=2.5)
     assert res_create.get("success") is True or "result" in res_create
+    assert res_create.get("executed_on_thread") == "MainThread"
 
     # Verify object appears in scene
     found = client.query_objects(name_filter=obj_name)
@@ -161,3 +172,152 @@ def test_live_lifecycle_create_transform_export_delete(live_blender_bridge, tmp_
     # 5. Verify object is completely gone from scene
     after_del = client.query_objects(name_filter=obj_name)
     assert len(after_del) == 0, f"Object {obj_name} was not deleted from scene"
+
+
+@pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
+def test_live_allow_python_exec_disabled(tmp_path):
+    """
+    Test 4: Verify BLENDER_ALLOW_PYTHON_EXEC=false blocks execution with HTTP 403 Forbidden
+    while allowing read-only status inspection.
+    """
+    port = 9897
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    bridge_script = os.path.join(repo_root, "blender_mcp", "blender_bridge.py")
+
+    driver_code = f"""
+import sys, os, time
+os.environ['BLENDER_BRIDGE_PORT'] = '{port}'
+os.environ['BLENDER_BRIDGE_HOST'] = '127.0.0.1'
+os.environ['BLENDER_ALLOW_PYTHON_EXEC'] = 'false'
+
+with open(r'{bridge_script}', 'r', encoding='utf-8') as f:
+    exec(f.read(), globals())
+
+while globals().get('SERVER_RUNNING', True):
+    process_queue()
+    time.sleep(0.01)
+"""
+    driver_file = os.path.join(tempfile.gettempdir(), f"blender_test_driver_{port}.py")
+    with open(driver_file, "w", encoding="utf-8") as f:
+        f.write(driver_code)
+
+    proc = subprocess.Popen(
+        [BLENDER_PATH, "-b", "--factory-startup", "--python", driver_file],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    client = BlenderClient(bridge_url=f"http://127.0.0.1:{port}")
+
+    try:
+        # Wait for bridge ready
+        ready = False
+        for _ in range(20):
+            time.sleep(0.3)
+            st = client.get_status()
+            if st.get("status") == "connected":
+                ready = True
+                break
+        assert ready, "Bridge failed to start in exec-disabled mode"
+
+        # Verify status still works
+        st = client.get_status()
+        assert st.get("status") == "connected"
+        assert st.get("executed_on_thread") == "MainThread"
+
+        # Verify execute_python is blocked with 403 Forbidden
+        res = client.execute_python("print('should be blocked')")
+        assert res.get("success") is False
+        assert res.get("http_code") == 403
+        assert "disabled" in res.get("error", "").lower()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        try:
+            os.remove(driver_file)
+        except OSError:
+            pass
+
+
+@pytest.mark.skipif(not BLENDER_AVAILABLE, reason="Blender executable not installed in environment")
+def test_live_bridge_auth_token_enforcement(tmp_path):
+    """
+    Test 5: Verify BLENDER_BRIDGE_AUTH_TOKEN rejects unauthorized requests (401)
+    and accepts authorized requests (200).
+    """
+    port = 9896
+    token = "secret_integration_token_xyz"
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    bridge_script = os.path.join(repo_root, "blender_mcp", "blender_bridge.py")
+
+    driver_code = f"""
+import sys, os, time
+os.environ['BLENDER_BRIDGE_PORT'] = '{port}'
+os.environ['BLENDER_BRIDGE_HOST'] = '127.0.0.1'
+os.environ['BLENDER_BRIDGE_AUTH_TOKEN'] = '{token}'
+
+with open(r'{bridge_script}', 'r', encoding='utf-8') as f:
+    exec(f.read(), globals())
+
+while globals().get('SERVER_RUNNING', True):
+    process_queue()
+    time.sleep(0.01)
+"""
+    driver_file = os.path.join(tempfile.gettempdir(), f"blender_test_driver_{port}.py")
+    with open(driver_file, "w", encoding="utf-8") as f:
+        f.write(driver_code)
+
+    proc = subprocess.Popen(
+        [BLENDER_PATH, "-b", "--factory-startup", "--python", driver_file],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    client_unauth = BlenderClient(bridge_url=f"http://127.0.0.1:{port}", auth_token=None)
+    client_wrong = BlenderClient(bridge_url=f"http://127.0.0.1:{port}", auth_token="wrong_token")
+    client_auth = BlenderClient(bridge_url=f"http://127.0.0.1:{port}", auth_token=token)
+
+    try:
+        # Wait for bridge ready via authorized client
+        ready = False
+        for _ in range(20):
+            time.sleep(0.3)
+            st = client_auth.get_status()
+            if st.get("status") == "connected":
+                ready = True
+                break
+        assert ready, "Bridge failed to start with auth token"
+
+        # 1. Unauthenticated request -> 401
+        res_unauth = client_unauth.get_status()
+        assert res_unauth.get("status") == "error"
+        assert res_unauth.get("http_code") == 401
+
+        # 2. Wrong token request -> 401
+        res_wrong = client_wrong.get_status()
+        assert res_wrong.get("status") == "error"
+        assert res_wrong.get("http_code") == 401
+
+        # 3. Authorized request -> 200
+        res_ok = client_auth.get_status()
+        assert res_ok.get("status") == "connected"
+        assert res_ok.get("executed_on_thread") == "MainThread"
+
+        # 4. Authorized execute -> 200
+        res_exec = client_auth.execute_python("result = 42 * 2")
+        assert res_exec.get("success") is True
+        assert res_exec.get("result") == "84"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        try:
+            os.remove(driver_file)
+        except OSError:
+            pass
