@@ -24,6 +24,11 @@ wheels/
 .installed.cfg
 *.egg
 
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
 # Blender files & autosaves
 *.blend
 *.blend1
