@@ -2,7 +2,8 @@
 Blender AI Model Context Protocol (MCP) Server
 ==============================================
 Standard MCP server connecting AI assistants (Google Antigravity, OpenCode,
-Claude Desktop, Cursor) directly to live Blender sessions.
+Claude Desktop, Cursor) directly to live Blender sessions with ToolAnnotations
+metadata and robust error handling.
 """
 
 import os
@@ -10,6 +11,7 @@ import sys
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from .blender_client import BlenderClient, DEFAULT_BRIDGE_URL
 
@@ -38,7 +40,16 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool(name="blender_get_connection_status")
+@mcp.tool(
+    name="blender_get_connection_status",
+    description="Check if Blender live bridge is active and view active document status, active object, and object counts.",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_get_connection_status() -> Dict[str, Any]:
     """Check if the Blender live bridge is active and view active document status, active object, and object counts."""
     res = client.get_status()
@@ -57,13 +68,31 @@ async def blender_get_connection_status() -> Dict[str, Any]:
     return res
 
 
-@mcp.tool(name="blender_inspect_scene")
+@mcp.tool(
+    name="blender_inspect_scene",
+    description="Retrieve full hierarchy of objects in the scene, including types, world transforms, modifiers, and polygon counts.",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_inspect_scene() -> Dict[str, Any]:
     """Retrieve full hierarchy of objects in the scene, including types, world transforms, modifiers, and polygon counts."""
     return client.inspect_scene()
 
 
-@mcp.tool(name="blender_execute_python")
+@mcp.tool(
+    name="blender_execute_python",
+    description="Execute arbitrary Python code safely on Blender's main thread with full access to bpy and bmesh.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=True
+    )
+)
 async def blender_execute_python(code: str, timeout_seconds: float = 30.0) -> Dict[str, Any]:
     """
     Execute arbitrary Python code safely on Blender's main thread with full access to bpy and bmesh.
@@ -72,13 +101,31 @@ async def blender_execute_python(code: str, timeout_seconds: float = 30.0) -> Di
     return client.execute_python(code, timeout=timeout_seconds)
 
 
-@mcp.tool(name="blender_query_objects")
+@mcp.tool(
+    name="blender_query_objects",
+    description="Filter objects in the active scene by name substring and/or type ('MESH', 'CAMERA', 'LIGHT', 'EMPTY', 'CURVE').",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_query_objects(name_filter: str = "", object_type: str = "") -> List[Dict[str, Any]]:
     """Filter objects in the active scene by name substring and/or type ('MESH', 'CAMERA', 'LIGHT', 'EMPTY', 'CURVE')."""
     return client.query_objects(name_filter=name_filter, object_type=object_type)
 
 
-@mcp.tool(name="blender_select_objects")
+@mcp.tool(
+    name="blender_select_objects",
+    description="Select objects by name in the 3D Viewport and optionally designate one as the active object.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_select_objects(
     object_names: List[str],
     active_object_name: Optional[str] = None,
@@ -88,7 +135,16 @@ async def blender_select_objects(
     return client.select_objects(object_names, active_name=active_object_name, deselect_others=deselect_others)
 
 
-@mcp.tool(name="blender_create_primitive")
+@mcp.tool(
+    name="blender_create_primitive",
+    description="Spawn parametric primitive mesh ('cube', 'cylinder', 'uv_sphere', 'ico_sphere', 'cone', 'plane').",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False
+    )
+)
 async def blender_create_primitive(
     primitive_type: str,
     name: Optional[str] = None,
@@ -102,7 +158,16 @@ async def blender_create_primitive(
     return client.create_primitive(primitive_type, name=name, location=loc, size=size, radius=radius, depth=depth)
 
 
-@mcp.tool(name="blender_transform_object")
+@mcp.tool(
+    name="blender_transform_object",
+    description="Apply position, rotation (Euler radians), or scale to any scene object.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_transform_object(
     object_name: str,
     location: Optional[List[float]] = None,
@@ -114,7 +179,16 @@ async def blender_transform_object(
     return client.transform_object(object_name, location=location, rotation_euler=rotation_euler, scale=scale, relative=relative)
 
 
-@mcp.tool(name="blender_apply_modifier")
+@mcp.tool(
+    name="blender_apply_modifier",
+    description="Add or configure a modifier ('SUBSURF', 'BEVEL', 'BOOLEAN', 'MIRROR', 'SOLIDIFY') and optionally apply it permanently.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=False
+    )
+)
 async def blender_apply_modifier(
     object_name: str,
     modifier_type: str,
@@ -126,7 +200,16 @@ async def blender_apply_modifier(
     return client.apply_modifier(object_name, modifier_type, modifier_name=modifier_name, properties=properties, apply=apply)
 
 
-@mcp.tool(name="blender_setup_camera_light")
+@mcp.tool(
+    name="blender_setup_camera_light",
+    description="Configure or create the scene camera (aimed at a target point) and scene illumination.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_setup_camera_light(
     camera_location: Optional[List[float]] = None,
     camera_target: Optional[List[float]] = None,
@@ -147,7 +230,16 @@ async def blender_setup_camera_light(
     )
 
 
-@mcp.tool(name="blender_create_material")
+@mcp.tool(
+    name="blender_create_material",
+    description="Create or configure a Principled BSDF PBR material with custom physical surface parameters.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_create_material(
     material_name: str,
     base_color_rgba: List[float] = [0.8, 0.8, 0.8, 1.0],
@@ -160,13 +252,31 @@ async def blender_create_material(
     return client.create_material(material_name, base_color=rgba, metallic=metallic, roughness=roughness, transmission=transmission)
 
 
-@mcp.tool(name="blender_delete_objects")
+@mcp.tool(
+    name="blender_delete_objects",
+    description="Delete scene objects by name and purge orphan mesh datablocks from memory.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_delete_objects(object_names: List[str]) -> Dict[str, Any]:
     """Delete scene objects by name and purge orphan mesh datablocks from memory."""
     return client.delete_objects(object_names)
 
 
-@mcp.tool(name="blender_render_viewport")
+@mcp.tool(
+    name="blender_render_viewport",
+    description="Render a frame from the active camera to an image file (PNG).",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_render_viewport(
     output_image_path: str,
     resolution_width: int = 1920,
@@ -181,13 +291,31 @@ async def blender_render_viewport(
     )
 
 
-@mcp.tool(name="blender_import_model")
+@mcp.tool(
+    name="blender_import_model",
+    description="Import a standard 3D file (.obj, .stl, .fbx, .gltf, .glb, .ply) into the active scene.",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False
+    )
+)
 async def blender_import_model(filepath: str) -> Dict[str, Any]:
     """Import a standard 3D file (.obj, .stl, .fbx, .gltf, .glb, .ply) into the active scene."""
     return client.import_model(filepath)
 
 
-@mcp.tool(name="blender_export_model")
+@mcp.tool(
+    name="blender_export_model",
+    description="Export scene or selected objects to standard 3D formats ('stl', 'obj', 'fbx', 'gltf', 'glb').",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=False
+    )
+)
 async def blender_export_model(
     output_filepath: str,
     format_type: str = "stl",

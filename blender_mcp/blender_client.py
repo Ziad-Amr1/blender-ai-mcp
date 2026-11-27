@@ -16,16 +16,40 @@ DEFAULT_BRIDGE_URL = "http://127.0.0.1:9876"
 
 
 class BlenderClient:
-    def __init__(self, bridge_url: str = DEFAULT_BRIDGE_URL, timeout: float = 45.0):
+    def __init__(
+        self,
+        bridge_url: str = DEFAULT_BRIDGE_URL,
+        timeout: float = 45.0,
+        auth_token: Optional[str] = None
+    ):
         self.bridge_url = bridge_url.rstrip("/")
         self.timeout = timeout
+        self.auth_token = auth_token if auth_token is not None else os.environ.get("BLENDER_BRIDGE_AUTH_TOKEN")
+
+    def _get_headers(self, additional: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        headers: Dict[str, str] = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+        if additional:
+            headers.update(additional)
+        return headers
 
     def get_status(self) -> Dict[str, Any]:
         """Check if the bridge server is responding and retrieve scene summary."""
         try:
-            req = urllib.request.Request(f"{self.bridge_url}/status", headers={"Accept": "application/json"})
+            req = urllib.request.Request(
+                f"{self.bridge_url}/status",
+                headers=self._get_headers({"Accept": "application/json"})
+            )
             with urllib.request.urlopen(req, timeout=5.0) as resp:
                 return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", "ignore")
+            try:
+                parsed = json.loads(err_body)
+                return {"status": "error", "http_code": e.code, "error": parsed.get("error", err_body)}
+            except Exception:
+                return {"status": "error", "http_code": e.code, "error": f"HTTP {e.code}: {err_body}"}
         except urllib.error.URLError as e:
             return {
                 "status": "disconnected",
@@ -42,25 +66,38 @@ class BlenderClient:
             req = urllib.request.Request(
                 f"{self.bridge_url}/execute",
                 data=payload,
-                headers={"Content-Type": "application/json"}
+                headers=self._get_headers({"Content-Type": "application/json"})
             )
             with urllib.request.urlopen(req, timeout=to + 5.0) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", "ignore")
             try:
-                return json.loads(err_body)
+                parsed = json.loads(err_body)
+                if "error" in parsed:
+                    return {"success": False, "http_code": e.code, "error": f"HTTP {e.code}: {parsed['error']}"}
+                return parsed
             except Exception:
-                return {"success": False, "error": f"HTTP {e.code}: {err_body}"}
+                return {"success": False, "http_code": e.code, "error": f"HTTP {e.code}: {err_body}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     def inspect_scene(self) -> Dict[str, Any]:
         """Retrieve full hierarchy of objects in the scene with transforms, modifiers, and types."""
         try:
-            req = urllib.request.Request(f"{self.bridge_url}/inspect", headers={"Accept": "application/json"})
+            req = urllib.request.Request(
+                f"{self.bridge_url}/inspect",
+                headers=self._get_headers({"Accept": "application/json"})
+            )
             with urllib.request.urlopen(req, timeout=15.0) as resp:
                 return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", "ignore")
+            try:
+                parsed = json.loads(err_body)
+                return {"error": f"HTTP {e.code}: {parsed.get('error', err_body)}"}
+            except Exception:
+                return {"error": f"HTTP {e.code}: {err_body}"}
         except Exception as e:
             # Fallback to direct script execution
             code = """
@@ -179,16 +216,17 @@ result = {{"created": obj.name, "type": obj.type, "location": list(obj.location)
         relative: bool = False
     ) -> Dict[str, Any]:
         """Apply translation, rotation, or scale to an object in world space or relative offset."""
+        target_name = json.dumps(name)
         code = f"""
 import bpy, math
-obj = bpy.data.objects.get({json.dumps(name)})
+obj = bpy.data.objects.get({target_name})
 if not obj:
-    raise ValueError(f"Object '{json.dumps(name)}' not found")
+    raise ValueError("Object " + {target_name!r} + " not found")
 
-loc = {json.dumps(location)}
-rot = {json.dumps(rotation_euler)}
-sc = {json.dumps(scale)}
-rel = {json.dumps(relative)}
+loc = {repr(location)}
+rot = {repr(rotation_euler)}
+sc = {repr(scale)}
+rel = {repr(bool(relative))}
 
 if loc is not None:
     if rel:
@@ -231,7 +269,7 @@ if not obj:
     raise ValueError("Object not found")
 
 m_type = {json.dumps(modifier_type.upper())}
-m_name = {json.dumps(modifier_name)} or m_type.capitalize()
+m_name = {repr(modifier_name)} or m_type.capitalize()
 mod = obj.modifiers.get(m_name) or obj.modifiers.new(name=m_name, type=m_type)
 
 props = {json.dumps(properties or {})}
@@ -239,7 +277,7 @@ for k, v in props.items():
     if hasattr(mod, k):
         setattr(mod, k, v)
 
-if {json.dumps(apply)}:
+if {repr(bool(apply))}:
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.modifier_apply(modifier=mod.name)
     result = {{"applied": True, "object": obj.name, "modifier": m_name}}
@@ -269,12 +307,13 @@ if not cam:
     bpy.context.scene.collection.objects.link(cam)
     bpy.context.scene.camera = cam
 
-if {json.dumps(camera_loc)} is not None:
-    cam.location = {json.dumps(camera_loc)}
+cam_loc_val = {repr(camera_loc)}
+if cam_loc_val is not None:
+    cam.location = cam_loc_val
 if hasattr(cam.data, 'lens'):
     cam.data.lens = {float(focal_length)}
 
-target = {json.dumps(camera_target)}
+target = {repr(camera_target)}
 if target:
     direction = Vector(target) - cam.location
     rot_quat = direction.to_track_quat('-Z', 'Y')
@@ -411,7 +450,7 @@ result = {{"imported_objects": imported, "count": len(imported), "filepath": fp}
 import bpy, os
 fp = {json.dumps(filepath)}
 fmt = {json.dumps(format_type.lower())}
-sel = {json.dumps(selected_only)}
+sel = {repr(bool(selected_only))}
 os.makedirs(os.path.dirname(os.path.abspath(fp)), exist_ok=True)
 
 if fmt == 'stl':

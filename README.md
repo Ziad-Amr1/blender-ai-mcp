@@ -108,6 +108,38 @@ Add the server to your MCP client configuration file:
 
 ---
 
+## Security & Configuration
+
+The Blender AI Bridge executes code directly within your Blender environment. It incorporates strict security defaults:
+
+### 1. Python Execution Control (`BLENDER_ALLOW_PYTHON_EXEC`)
+- **Default:** `false` (arbitrary Python script execution is disabled by default).
+- When disabled, requests to `/execute` return **HTTP 403 Forbidden** before any code is parsed or queued. Read-only inspection (`/status`, `/inspect`) remains functional.
+- To enable automation scripting in trusted environments, start Blender with:
+  ```bash
+  set BLENDER_ALLOW_PYTHON_EXEC=true
+  blender --python blender_bridge.py
+  ```
+
+### 2. Network Binding & Remote Deployment
+- **Default Host:** `127.0.0.1` (loopback only).
+- **Transport Security Warning:** The bridge server communicates over plain HTTP. Setting an authentication token does **not** make plain HTTP secure on an untrusted network, as tokens and commands are transmitted in cleartext.
+- **Non-Loopback Binding:** To bind to an external interface (e.g. `0.0.0.0`), you must explicitly provide:
+  1. `BLENDER_BRIDGE_ALLOW_NON_LOOPBACK=true`
+  2. `BLENDER_BRIDGE_AUTH_TOKEN=<secret>` (minimum 16 characters).
+- **Token Generation:** Generate cryptographically secure tokens using Python's `secrets` module:
+  ```bash
+  python -c "import secrets; print(secrets.token_urlsafe(32))"
+  ```
+  *(Note: A 16+ character count alone does not guarantee high entropy; always use a cryptographically secure random generator).*
+- **Encrypted Transport Requirement:** Remote or cross-host deployments **must** terminate TLS using a reverse proxy (e.g. Nginx, Caddy) or connect through an encrypted tunnel (SSH port forwarding or WireGuard/VPN):
+  ```bash
+  # Example: Secure local port forwarding over SSH
+  ssh -L 9876:localhost:9876 user@remote-gpu-workstation
+  ```
+
+---
+
 ## Exposed MCP Tools
 
 | Tool Name | Description |
