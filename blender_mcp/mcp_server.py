@@ -90,7 +90,7 @@ async def blender_inspect_scene() -> Dict[str, Any]:
         readOnlyHint=False,
         destructiveHint=True,
         idempotentHint=False,
-        openWorldHint=False
+        openWorldHint=True
     )
 )
 async def blender_execute_python(code: str, timeout_seconds: float = 30.0) -> Dict[str, Any]:

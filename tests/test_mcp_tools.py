@@ -43,6 +43,7 @@ def test_all_14_blender_tools_registered_with_annotations():
     assert tool_dict["blender_inspect_scene"].annotations.readOnlyHint is True
     assert tool_dict["blender_query_objects"].annotations.readOnlyHint is True
     assert tool_dict["blender_execute_python"].annotations.destructiveHint is True
+    assert tool_dict["blender_execute_python"].annotations.openWorldHint is True
     assert tool_dict["blender_delete_objects"].annotations.destructiveHint is True
     assert tool_dict["blender_render_viewport"].annotations.destructiveHint is True
     assert tool_dict["blender_export_model"].annotations.destructiveHint is True
