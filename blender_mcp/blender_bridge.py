@@ -14,8 +14,10 @@ Features:
   * Blocks execution requests before parsing, queueing, or evaluation with HTTP 403.
   * Constant-time token comparison (hmac.compare_digest) to prevent timing attacks.
   * Refuses unsafe non-loopback network exposure without explicit BLENDER_BRIDGE_ALLOW_NON_LOOPBACK
-    opt-in and a high-entropy secret token (>= 16 characters).
-  * Warning against exposing plain HTTP directly to untrusted networks (requires TLS / tunnel).
+    opt-in and an authentication token of at least 16 characters.
+  * Remote access warning: setting an auth token over plain HTTP does not protect against network
+    sniffing, tampering, or token replay; remote connections require an encrypted transport
+    such as a TLS reverse proxy (Nginx, Caddy), SSH tunnel, or VPN.
 - Captures stdout, stderr, exception tracebacks, and return values.
 - Clean queue draining and event signaling on shutdown to prevent worker thread hangs.
 - JSON REST API for status, scene inspection, arbitrary Python execution, and viewport rendering.

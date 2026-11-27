@@ -3,7 +3,7 @@ Unit Tests for Blender Bridge Security & Auth Controls
 ======================================================
 Tests:
 1. Host binding security: loopback vs non-loopback.
-2. Non-loopback requires explicit BLENDER_BRIDGE_ALLOW_NON_LOOPBACK opt-in AND high-entropy token (>= 16 chars).
+2. Non-loopback requires explicit BLENDER_BRIDGE_ALLOW_NON_LOOPBACK opt-in AND token of at least 16 chars.
 3. BLENDER_ALLOW_PYTHON_EXEC defaults to FALSE (secure by default).
 4. Token authorization parsing with constant-time HMAC comparison (Bearer and X-Bridge-Token headers).
 5. Token never leaked in error messages or logs.
