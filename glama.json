@@ -1,0 +1,46 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "Ziad-Amr1"
+  ],
+  "name": "blender-ai-mcp",
+  "version": "1.1.1",
+  "description": "Model Context Protocol (MCP) server connecting AI assistants directly to live Blender 3D modeling and rendering sessions. Provides full automation for scene inspection, mesh primitive creation, world transforms, procedural modifier management (Subsurf, Bevel, Boolean, Solidify), Principled BSDF PBR material configuration, camera tracking, scene illumination, EEVEE/Cycles viewport rendering, standard 3D asset import/export (.obj, .stl, .fbx, .gltf, .ply), and safe main-thread Python automation scripting.",
+  "type": "mcp_server",
+  "status": "active",
+  "framework": "FastMCP",
+  "transport": [
+    "stdio"
+  ],
+  "keywords": [
+    "mcp",
+    "blender",
+    "3d",
+    "modeling",
+    "rendering",
+    "eevee",
+    "cycles",
+    "pbr",
+    "gltf",
+    "obj",
+    "cad",
+    "python",
+    "automation"
+  ],
+  "tools": [
+    "blender_get_connection_status",
+    "blender_inspect_scene",
+    "blender_execute_python",
+    "blender_query_objects",
+    "blender_select_objects",
+    "blender_create_primitive",
+    "blender_transform_object",
+    "blender_apply_modifier",
+    "blender_setup_camera_light",
+    "blender_create_material",
+    "blender_delete_objects",
+    "blender_render_viewport",
+    "blender_import_model",
+    "blender_export_model"
+  ]
+}

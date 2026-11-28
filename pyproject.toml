@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blender-ai-mcp"
-version = "1.1.0"
+version = "1.1.1"
 description = "AI Model Context Protocol (MCP) server and live bidirectional bridge for Blender 3D automation"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -4,7 +4,7 @@ Blender AI MCP Package
 Model Context Protocol (MCP) server and live bidirectional bridge for Blender 3D.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.1"
 __author__ = "Ziad Amr"
 
 from .blender_client import BlenderClient
