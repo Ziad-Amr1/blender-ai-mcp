@@ -140,24 +140,61 @@ The Blender AI Bridge executes code directly within your Blender environment. It
 
 ---
 
+## Recommended 3D Modeling & Rendering Workflow
+
+To build and render 3D scenes reliably, execute tools in this sequence:
+
+```
+[blender_get_connection_status]       -> Verify bridge connection on port 9876
+         |
+[blender_inspect_scene]               -> Survey scene hierarchy, poly counts, and cameras
+         |
++--------+----------------------------+
+|                                     |
+v                                     v
+[blender_create_primitive]            [blender_import_model]
+(Spawn parametric cube/sphere/plane)   (Import .obj/.stl/.fbx/.gltf/.ply)
+         |                                    |
+         +-----------------+------------------+
+                           |
+                           v
+         [blender_transform_object]   -> Position, rotate, scale (absolute or relative)
+                           |
+         [blender_apply_modifier]     -> Add procedural bevel, subsurf, boolean, solidify
+                           |
+         [blender_create_material]    -> Assign Principled BSDF PBR shader (color, roughness)
+                           |
+         [blender_setup_camera_light] -> Position camera with tracking constraint and lights
+                           |
+         +-----------------+------------------+
+         |                                    |
+         v                                    v
+[blender_render_viewport]             [blender_export_model]
+(Render image via EEVEE/Cycles)       (Export scene/selected to .obj/.stl/.gltf)
+```
+
+---
+
 ## Exposed MCP Tools
 
-| Tool Name | Description |
-| :--- | :--- |
-| `blender_get_connection_status` | Check if Blender Live Bridge is active and view scene stats. |
-| `blender_inspect_scene` | Retrieve list of all scene objects, bounding boxes, and active camera. |
-| `blender_execute_python` | Run arbitrary `bpy`/`bmesh` Python code with captured outputs. |
-| `blender_query_objects` | Query objects matching specific names or types (`MESH`, `CAMERA`, etc.). |
-| `blender_select_objects` | Select, deselect, or set active object by name. |
-| `blender_create_primitive` | Spawn parametric primitive geometry at specified coordinates. |
-| `blender_transform_object` | Move, rotate, or scale objects in world or relative coordinates. |
-| `blender_apply_modifier` | Add and apply modifiers (Subsurf, Bevel, Boolean, Mirror, Solidify). |
-| `blender_setup_camera_light` | Position cameras aimed at targets and configure lighting. |
-| `blender_create_material` | Create PBR Principled BSDF materials with custom surface parameters. |
-| `blender_delete_objects` | Safely remove scene objects and purge orphan mesh datablocks. |
-| `blender_render_viewport` | Trigger viewport render or full F12 render and save image. |
-| `blender_import_model` | Import standard 3D formats (.stl, .obj, .fbx, .gltf, .ply). |
-| `blender_export_model` | Export scene or selected objects to STL, OBJ, FBX, or GLTF. |
+The server exposes 14 tools with full MCP `ToolAnnotations` metadata:
+
+| Tool Name | Type | Annotations | Description |
+| :--- | :--- | :--- | :--- |
+| `blender_get_connection_status` | Inspection | `readOnly: true`, `destructive: false` | Verify Blender live HTTP bridge status, version, and object counts. |
+| `blender_inspect_scene` | Inspection | `readOnly: true`, `destructive: false` | Retrieve full hierarchy of objects, world transforms, modifiers, and poly counts. |
+| `blender_execute_python` | Automation | `readOnly: false`, `destructive: true`, `openWorld: true` | Run arbitrary `bpy`/`bmesh` Python code safely on Blender's main thread. |
+| `blender_query_objects` | Search | `readOnly: true`, `destructive: false` | Filter scene objects by name substring or type ('MESH', 'LIGHT', 'CAMERA'). |
+| `blender_select_objects` | Selection | `readOnly: false`, `destructive: false` | Select objects by name, set active object, and optionally deselect others. |
+| `blender_create_primitive` | Modeling | `readOnly: false`, `destructive: false` | Spawn parametric primitive geometry ('cube', 'sphere', 'cylinder', 'plane', 'cone'). |
+| `blender_transform_object` | Modeling | `readOnly: false`, `destructive: false` | Move, rotate (degrees), or scale objects in world or relative coordinates. |
+| `blender_apply_modifier` | Modeling | `readOnly: false`, `destructive: false` | Add/configure modifiers (Subsurf, Bevel, Boolean, Mirror, Solidify) or bake them. |
+| `blender_setup_camera_light` | Staging | `readOnly: false`, `destructive: false` | Position camera aimed at a target point and configure scene lighting. |
+| `blender_create_material` | Shading | `readOnly: false`, `destructive: false` | Create PBR Principled BSDF materials with custom surface parameters. |
+| `blender_delete_objects` | Cleanup | `readOnly: false`, `destructive: true` | Safely remove scene objects and purge orphan mesh datablocks. |
+| `blender_render_viewport` | Rendering | `readOnly: false`, `destructive: true` | Capture still render from camera to disk using EEVEE or Cycles. |
+| `blender_import_model` | Exchange | `readOnly: false`, `destructive: false` | Import standard 3D formats (.stl, .obj, .fbx, .gltf, .glb, .ply). |
+| `blender_export_model` | Exchange | `readOnly: false`, `destructive: true` | Export scene or selected objects to STL, OBJ, FBX, or GLTF. |
 
 ---
 
